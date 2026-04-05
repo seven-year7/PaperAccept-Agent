@@ -1,0 +1,28 @@
+{
+  "entries": [
+    {
+      "memory_kind": "user_profile",
+      "source": "explicit",
+      "confidence": 1.0,
+      "updated_at": "2026-04-02T17:15:14.547005+00:00",
+      "preview": "用户名为小法",
+      "user_id": "default"
+    },
+    {
+      "memory_kind": "user_profile",
+      "source": "explicit",
+      "confidence": 1.0,
+      "updated_at": "2026-04-02T17:17:57.840040+00:00",
+      "preview": "用户爱打云顶之弈，自称特别傻逼",
+      "user_id": "default"
+    },
+    {
+      "memory_kind": "agent_rules",
+      "source": "explicit",
+      "confidence": 1.0,
+      "updated_at": "2026-04-02T17:19:44.721197+00:00",
+      "preview": "用户要求回答直白一点",
+      "user_id": "default"
+    }
+  ]
+}

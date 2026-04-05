@@ -1,0 +1,45 @@
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+sse-starlette>=2.1.0
+langchain>=0.1.0
+langchain-community>=0.0.20
+langchain-core>=0.1.0
+langchain-openai>=1.0.0
+langgraph>=0.0.40
+dashscope>=1.14.0
+openai>=1.10.0
+pymilvus>=2.3.5
+pydantic>=2.5.0,<3.0.0
+pydantic-settings>=2.1.0
+httpx>=0.26.0
+aiohttp>=3.9.0
+aiofiles>=23.2.0
+python-multipart>=0.0.6
+loguru>=0.7.2
+python-dotenv>=1.0.0
+langchain-milvus>=0.3.3
+langchain-text-splitters>=1.1.0
+langchain-experimental>=0.0.60
+langchain-qwq>=0.3.4
+redis>=5.2.1
+elasticsearch>=8.12.0,<9
+tiktoken>=0.7.0
+arxiv>=2.1.0
+
+# 论文写作链路：主图五车间 + condition_handler + error_finalize；子图仅 writeExecute/writeAudit；PAPER_WRITING_RAG_ENABLED 等见 readme。无新增 PyPI 依赖。Mock：tests/test_paper_workflow_e2e.py；路由单测：tests/test_paper_condition_handler.py；整图真链路：tests/test_paper_workflow_live.py（PAPER_WORKFLOW_LIVE_TEST=1；见 readme）。
+# 统一聊天意图路由（CHAT_PAPER_ROUTE_*）仅使用已有 langchain-openai / pydantic，无新增依赖；见 README.md「附录 D」与 tests/test_chat_intent_router.py。
+# 项目说明文档：README.md 已改为「首页概览 + 附录」结构（与 Paper-Agent 式排版类似），环境变量全文仍以 app/config.py 为准。
+# README「目录结构」：app/ 下 api、agent/paper、tools、models 为文件级；core、services、utils 仅目录级说明，无 PyPI 变更。
+# 论文检索人工确认：开启时 search 节点在 search_confirm 前先推 type=content（可读说明）；PAPER_SEARCH_HUMAN_CONFIRM_ENABLED 默认 true；见 paper_search_confirm_gate。可选 PAPER_SEARCH_CONFIRM_REFINER_ENABLED / PAPER_SEARCH_REFINER_MODEL。
+# 论文 SSE 在人工确认路径下含 type=assistant_message_boundary（确认后、检索前），无新增 PyPI 依赖；见 README「助手消息分段」。
+# 内置 static 页对话仅走 /api/chat_stream（已移除快速模式），无 PyPI 变更。
+# 内置页论文确认条：confirm_search 成功后移除面板并通知（static/app.js），无依赖变更。
+# 内置页已移除侧栏「知识库嵌入」；上传走工具菜单 /api/upload，无 PyPI 变更。
+# 侧栏「近期对话」列表可视约 7 条（--sidebar-history-visible-rows），无 PyPI 变更。
+# 语义 Markdown 分块（RAG_MARKDOWN_SEMANTIC_CHUNK_ENABLED）：langchain-experimental；见 readme / README RAG 环境变量。
+# 可选开发依赖（Playwright；原内置页侧栏「知识库嵌入」烟测已移除；嵌入请用工具菜单上传或 POST /api/upload、/api/upload/select+load）
+playwright>=1.40.0
+
+# 论文工作流端到端测试（Mock LLM/RAG/arXiv）：pytest tests/test_paper_workflow_e2e.py -q -o addopts=
+pytest>=7.4.0
+pytest-asyncio>=0.23.0
