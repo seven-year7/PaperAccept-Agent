@@ -117,6 +117,18 @@ class Settings(BaseSettings):
     long_term_memory_write_enabled: bool = False
     long_term_memory_base_path: str = "data/long_term_memory"
     long_term_memory_max_chars_per_file: int = 12000  # 单文件上限，超出截断并记 WARN
+    # 长期记忆前置拦截器（请求入口执行，先于意图路由）
+    ltm_interceptor_enabled: bool = True
+    ltm_interceptor_dry_run: bool = False
+    ltm_interceptor_policy: str = "llm_only"
+    # 单条抽取上限，防止模型异常输出污染长期记忆
+    ltm_interceptor_max_capture_chars: int = 500
+    # 每主题最多保留条目数，超过后按 FIFO 淘汰最早条目
+    ltm_topic_max_items: int = 10
+    # Memory.md 总 token 上限，超过则拒绝新增
+    ltm_memory_max_tokens: int = 3000
+    # token 计数模式：tiktoken（优先，失败回退）或 approx（字符估算）
+    ltm_token_counter_mode: str = "tiktoken"
 
     # 论文多 Agent 工作流（arXiv + 阅读摘要写作；可选叠加本地知识库检索）
     # 为 true 时向 RAG 对话 Agent 注册 search_arxiv_papers（默认关闭，避免无意触发 arXiv 限流）

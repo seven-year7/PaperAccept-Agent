@@ -12,6 +12,7 @@ from sse_starlette.sse import EventSourceResponse
 from app.config import config
 from app.models.request import ChatRequest, ClearRequest
 from app.models.response import ApiResponse, SessionInfoResponse
+from app.services.chat_pre_pipeline import PreChatContext, pre_chat_pipeline
 from app.services.chat_intent_router import resolve_chat_intent
 from app.services.paper_workflow_service import run_paper_research_stream
 from app.services.rag_agent_service import rag_agent_service
@@ -87,6 +88,15 @@ async def chat(request: ChatRequest):
     """
     try:
         logger.info(f"[会话 {request.id}] 收到快速对话请求: {request.question}")
+        pre_result = await pre_chat_pipeline.run(
+            PreChatContext(
+                question=request.question,
+                session_id=request.id,
+                user_id=request.user_id,
+                tenant_id=request.tenant_id,
+            )
+        )
+        logger.info(f"[INFO][PRE_CHAT_PIPELINE]: {pre_result.as_log_payload()}")
 
         if config.chat_paper_route_enabled:
             routed = await resolve_chat_intent(
@@ -174,6 +184,15 @@ async def chat_stream(request: ChatRequest):
 
     async def event_generator():
         try:
+            pre_result = await pre_chat_pipeline.run(
+                PreChatContext(
+                    question=request.question,
+                    session_id=request.id,
+                    user_id=request.user_id,
+                    tenant_id=request.tenant_id,
+                )
+            )
+            logger.info(f"[INFO][PRE_CHAT_PIPELINE]: {pre_result.as_log_payload()}")
             if config.chat_paper_route_enabled:
                 routed = await resolve_chat_intent(
                     request.question,

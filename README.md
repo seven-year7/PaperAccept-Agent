@@ -32,7 +32,7 @@
 
 ## ✨ 核心特性
 
-- 🤖 **RAG 对话**：`POST /api/chat`、`POST /api/chat_stream`（SSE）；LangChain Agent 挂载 `retrieve_knowledge`、`get_current_time`、可选 `append_long_term_memory`。
+- 🤖 **RAG 对话**：`POST /api/chat`、`POST /api/chat_stream`（SSE）；LangChain Agent 挂载 `retrieve_knowledge`、`get_current_time`；长期记忆写入在请求入口前置拦截器执行（非 Agent 工具）。
 - 📚 **知识入库**：`.md/.txt` 上传与目录批量索引；分片支持标题递归、可选 **层级 tiktoken** 与 **语义 Markdown 分块**（`langchain-experimental` + tiktoken，见配置项）。
 - 📄 **论文多 Agent 工作流**：结构化 arXiv 查询、可选 **检索前人工确认**（`search_confirm` + `POST /api/paper/confirm_search`）、阅读节点结构化抽取、主图 `search → reading → write → report`（`write` 为子图，内含 `writePlan`）、终稿流式输出；工作区目录名与 `run_id` 对齐（时间戳到分钟，Windows 友好）。
 - 🔄 **实时流式输出**：SSE 推送 `phase` / `content` / `done` / `error` 等；确认路径含 `assistant_message_boundary` 供前端分段展示。
@@ -55,7 +55,7 @@
 ### RAG 对话（概要）
 
 1. 客户端携带 `Id`（会话）、`Question`、`TenantId` 等调用 `POST /api/chat_stream`。
-2. 服务注入系统提示、长期记忆（可选）、Redis 历史与摘要窗口。
+2. 请求先经过前置拦截器（可选长期记忆写入）后，再注入系统提示、长期记忆读取内容、Redis 历史与摘要窗口。
 3. 模型按需调用 `retrieve_knowledge`；门控/混合检索/降级逻辑在工具内完成。
 4. 回复以 SSE 流式返回，并回写 Redis 事件流。
 
@@ -119,7 +119,7 @@ Agent-Create/（或你的项目根目录）
 │   ├── tools/                       # LangChain @tool，供 RAG Agent 调用
 │   │   ├── knowledge_tool.py        # retrieve_knowledge：Milvus/混合、门控、降级、format_docs
 │   │   ├── time_tool.py             # get_current_time
-│   │   ├── long_term_memory_tool.py # append_long_term_memory（受配置开关控制）
+│   │   ├── long_term_memory_tool.py # 历史工具写入实现（兼容保留，当前主链路使用前置拦截器）
 │   │   ├── paper_arxiv_tool.py      # 可选 RAG 内 arXiv 工具（与论文 search 节点检索器分离）
 │   │   └── __init__.py
 │   │
@@ -226,7 +226,7 @@ Agent-Create/（或你的项目根目录）
 
 - **感知**：用户请求、`.md/.txt` 上传；`DocumentSplitterService` 分片；`VectorIndexService` 写入 Milvus。
 - **认知**：`RagAgentService` 构建 Agent 与消息历史；Redis 持久化；可选滚动摘要。
-- **行动**：`retrieve_knowledge`、`get_current_time`、`append_long_term_memory`（可选）。
+- **行动**：`retrieve_knowledge`、`get_current_time`（长期记忆写入由前置拦截器处理）。
 - **交互**：REST + SSE；内置 `static/`；OpenAPI `/docs`。
 
 ## A.3 实施阶段与验证（摘录）
@@ -245,7 +245,17 @@ Agent-Create/（或你的项目根目录）
 - **应用**：`APP_NAME`、`APP_VERSION`、`HOST`、`PORT`
 - **模型与嵌入**：`OPENROUTER_API_KEY`、`OPENROUTER_API_BASE`、`OPENROUTER_MODEL`、`OPENROUTER_EMBEDDING_MODEL`；嵌入烟测 `python scripts/test_openrouter_embedding.py`；**对话（与 RAG 同 KEY/BASE/RAG_MODEL）烟测** `python scripts/test_openrouter_chat.py`（可选 `python scripts/test_openrouter_chat.py --also-summary`）
 - **Milvus**：`MILVUS_HOST`、`MILVUS_PORT`、`MILVUS_TIMEOUT`；烟测 `python scripts/test_milvus_connection.py`
-- **RAG**：`RAG_TOP_K`、`RAG_MODEL`、`CHUNK_MAX_SIZE`、`CHUNK_OVERLAP`；**层级分块** `RAG_HIERARCHICAL_CHUNKS_ENABLED` 与 tiktoken 参数；**语义 Markdown 分块** `RAG_MARKDOWN_SEMANTIC_CHUNK_ENABLED` 与 `RAG_SEMANTIC_*`；**上传显式领域** `RAG_REQUIRE_EXPLICIT_TENANT_FOR_UPLOAD`；**Redis** `REDIS_URL`、`RAG_SESSION_TTL_SECONDS`、`RAG_SESSION_MAX_EVENTS`、`RAG_SESSION_STORE_SYSTEM`；**租户** `RAG_TENANT_ISOLATION_ENABLED`；**召回导出** `python scripts/dump_rag_recall.py`；**混合检索** `RAG_HYBRID_ENABLED`、`ELASTICSEARCH_*`、`RAG_HYBRID_*`、`python scripts/test_elasticsearch_connection.py`；**长期记忆** `LONG_TERM_MEMORY_*`
+- **RAG**：`RAG_TOP_K`、`RAG_MODEL`、`CHUNK_MAX_SIZE`、`CHUNK_OVERLAP`；**层级分块** `RAG_HIERARCHICAL_CHUNKS_ENABLED` 与 tiktoken 参数；**语义 Markdown 分块** `RAG_MARKDOWN_SEMANTIC_CHUNK_ENABLED` 与 `RAG_SEMANTIC_*`；**上传显式领域** `RAG_REQUIRE_EXPLICIT_TENANT_FOR_UPLOAD`；**Redis** `REDIS_URL`、`RAG_SESSION_TTL_SECONDS`、`RAG_SESSION_MAX_EVENTS`、`RAG_SESSION_STORE_SYSTEM`；**租户** `RAG_TENANT_ISOLATION_ENABLED`；**召回导出** `python scripts/dump_rag_recall.py`；**混合检索** `RAG_HYBRID_ENABLED`、`ELASTICSEARCH_*`、`RAG_HYBRID_*`、`python scripts/test_elasticsearch_connection.py`；**长期记忆** `LONG_TERM_MEMORY_*`、`LTM_INTERCEPTOR_*`
+
+长期记忆拦截器灰度建议：
+- `LTM_INTERCEPTOR_ENABLED=true` + `LTM_INTERCEPTOR_DRY_RUN=true`：仅打日志不落盘，用于观察命中质量。
+- 观察稳定后将 `LTM_INTERCEPTOR_DRY_RUN=false`：开启真实写入。
+- 需要快速回滚时仅设置 `LTM_INTERCEPTOR_ENABLED=false`。
+- 判别模型使用 `OPENROUTER_MODEL`（建议 `x-ai/grok-4.1-fast`），按三类结构化抽取：`用户身份`、`用户偏好`、`经验教训`。
+- 抽取结果为逐条写入（split），并执行同轮去重 + 与现有 `Memory.md` 简单去重；LLM 失败时本轮不写入（不回退规则）。
+- `Memory.md` 写入前会按主题加载并判重；同一主题最多保留 `LTM_TOPIC_MAX_ITEMS`（默认 10）条，超过按 FIFO 删除最早条目。
+- 整个 `Memory.md` 在写前/写后预测都受 `LTM_MEMORY_MAX_TOKENS`（默认 3000）门控，超限则拒绝新增。
+- token 计数使用 `LTM_TOKEN_COUNTER_MODE`：`tiktoken`（优先）或 `approx`（回退字符估算）。
 - **论文工作流**：`PAPER_ARXIV_TOOL_ENABLED`、`PAPER_WORKSPACE_ROOT`、`PAPER_WORKSPACE_TIMESTAMP_UTC`、`PAPER_ARXIV_*`、`PAPER_WRITING_RAG_ENABLED`、`PAPER_READ_MAX_CONCURRENT`、`PAPER_SECTION_*`、`PAPER_GLOBAL_REVIEW_*`、`PAPER_MODEL`、`PAPER_READING_SUMMARY_MAX_CHARS`、`PAPER_REPORT_STREAM_MAX_TOKENS`、`PAPER_REPORT_AUTO_INDEX_ENABLED`、`PAPER_WORKFLOW_TIMEOUT_MS`、`StructuredArxivQuery` 字段说明、`PAPER_SEARCH_HUMAN_CONFIRM_ENABLED` 与 `confirm_search` / `PAPER_SEARCH_CONFIRM_*`、**助手消息分段** `assistant_message_boundary`、SSE 失败语义等
 
 （完整分项说明、默认值与注意事项与原 README 「## 6. 配置与环境变量」逐条一致；篇幅过长处请以 `app/config.py` 为准。）

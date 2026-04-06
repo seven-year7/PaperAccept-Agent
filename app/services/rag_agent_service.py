@@ -28,7 +28,6 @@ from langchain_openai import ChatOpenAI
 
 from app.config import config
 from app.tools import (
-    append_long_term_memory,
     get_current_time,
     retrieve_knowledge,
     search_arxiv_papers,
@@ -99,28 +98,13 @@ def _extract_degrade_reason_from_tool_content(content: str) -> str:
     return match.group(1) if match else ""
 
 
-_LTM_TOOL_NAME = "append_long_term_memory"
-
-
-def _long_term_memory_obs_from_messages(messages_result: List[Any]) -> Dict[str, Any]:
-    """观测：长期记忆开关 + 本轮是否实际调用了落盘工具（模型未调工具则磁盘不会变）。"""
-    tool_messages = [m for m in messages_result if type(m).__name__ == "ToolMessage"]
-    called = any((getattr(m, "name", "") or "") == _LTM_TOOL_NAME for m in tool_messages)
-    if not called:
-        called = any(
-            any(
-                (tc.get("name") or "") == _LTM_TOOL_NAME
-                for tc in (getattr(m, "tool_calls", None) or [])
-            )
-            for m in messages_result
-        )
+def _long_term_memory_obs_from_messages(_messages_result: List[Any]) -> Dict[str, Any]:
+    """观测：长期记忆注入与前置拦截器开关状态。"""
     return {
         "ltm_read_enabled": config.long_term_memory_enabled,
         "ltm_write_enabled": config.long_term_memory_write_enabled,
-        "ltm_append_tool_registered": bool(
-            config.long_term_memory_enabled and config.long_term_memory_write_enabled
-        ),
-        "ltm_append_called_this_round": called,
+        "ltm_interceptor_enabled": config.ltm_interceptor_enabled,
+        "ltm_interceptor_dry_run": config.ltm_interceptor_dry_run,
     }
 
 
@@ -153,12 +137,10 @@ class RagAgentService:
             streaming=False,
         )
 
-        # 定义基础工具（长期记忆工具在开关开启时注册，执行时从 contextvar 读取 user_id）
+        # 定义基础工具（长期记忆写入由前置拦截器处理，不在 Agent tools 内执行）
         self.tools = [retrieve_knowledge, get_current_time]
         if config.paper_arxiv_tool_enabled:
             self.tools = [*self.tools, search_arxiv_papers]
-        if config.long_term_memory_enabled and config.long_term_memory_write_enabled:
-            self.tools = [*self.tools, append_long_term_memory]
 
         # Agent 初始化（会在异步方法中完成）
         self.agent = None
@@ -168,8 +150,9 @@ class RagAgentService:
         logger.info(
             f"[INFO][LTM]: read={config.long_term_memory_enabled} "
             f"write_env={config.long_term_memory_write_enabled} "
-            f"append_tool_registered={bool(config.long_term_memory_enabled and config.long_term_memory_write_enabled)} "
-            f"（磁盘仅在模型调用 append_long_term_memory 时更新）"
+            f"interceptor_enabled={config.ltm_interceptor_enabled} "
+            f"interceptor_dry_run={config.ltm_interceptor_dry_run} "
+            f"（写入在 API 前置拦截器执行）"
         )
         if config.paper_arxiv_tool_enabled:
             logger.info("[INFO][RAG]: paper_arxiv search_arxiv_papers tool registered for chat agent")
@@ -318,11 +301,11 @@ class RagAgentService:
               禁止把无关长期记忆（例如别的领域话题）硬扯成当前问题的答案。
         """).strip()
         ltm_write = dedent("""
-            - 仅当用户明确要求“记住/保存”或已确认的持久信息时，使用 append_long_term_memory 写入；
-              不要凭猜测写入；不要保存密码、令牌等敏感信息。
+            - 长期记忆写入由请求入口前置拦截器处理（先于意图识别与 RAG）。
+            - 若用户明确要求“记住/保存”，根据拦截器策略进行写入；不要保存密码、令牌等敏感信息。
         """).strip()
         ltm_readonly = dedent("""
-            - 当前未开放长期记忆磁盘写入，不要声称已将内容保存到服务端长期记忆文件。
+            - 当前长期记忆写入链路未开放（或 dry-run），不要声称已将内容保存到服务端长期记忆文件。
         """).strip()
 
         base = dedent("""
@@ -616,7 +599,6 @@ class RagAgentService:
             used_tool_output = False
             retrieve_called = False
             degrade_reason = ""
-            ltm_append_called = False
 
             async for token, metadata in self.agent.astream(
                 input=agent_input,
@@ -668,8 +650,6 @@ class RagAgentService:
                     # 尽可能捕获工具返回（不同版本字段可能不同，做兼容）
                     used_tool_output = True
                     tool_name = str(getattr(token, "name", "") or "")
-                    if tool_name == _LTM_TOOL_NAME:
-                        ltm_append_called = True
                     if tool_name == "retrieve_knowledge":
                         retrieve_called = True
                     call_id = str(getattr(token, "tool_call_id", "") or "")
@@ -745,10 +725,8 @@ class RagAgentService:
                     **summary_obs,
                     "ltm_read_enabled": config.long_term_memory_enabled,
                     "ltm_write_enabled": config.long_term_memory_write_enabled,
-                    "ltm_append_tool_registered": bool(
-                        config.long_term_memory_enabled and config.long_term_memory_write_enabled
-                    ),
-                    "ltm_append_called_this_round": ltm_append_called,
+                    "ltm_interceptor_enabled": config.ltm_interceptor_enabled,
+                    "ltm_interceptor_dry_run": config.ltm_interceptor_dry_run,
                 }
                 logger.info(f"[INFO][RAG_OBS]: {json.dumps(obs, ensure_ascii=False)}")
 

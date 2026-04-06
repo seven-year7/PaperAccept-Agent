@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from loguru import logger
 
@@ -25,6 +26,14 @@ _ALLOWED_USER_ID_CHARS = frozenset(
 
 MemoryKind = Literal["user_profile", "agent_rules"]
 MemorySource = Literal["explicit", "inferred"]
+MemoryTopic = Literal["user_identity", "user_preference", "lessons_learned"]
+
+_TOPIC_TITLES: Dict[MemoryTopic, str] = {
+    "user_identity": "用户身份",
+    "user_preference": "用户偏好",
+    "lessons_learned": "经验教训",
+}
+_TITLE_TO_TOPIC = {v: k for k, v in _TOPIC_TITLES.items()}
 
 _FILE_LOCKS: Dict[str, threading.Lock] = {}
 _FILE_LOCKS_GUARD = threading.Lock()
@@ -143,6 +152,90 @@ def _save_meta(path: Path, meta: Dict[str, Any]) -> None:
     path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _normalize_line(text: str) -> str:
+    return " ".join((text or "").strip().split()).lower()
+
+
+def _count_tokens(text: str) -> int:
+    mode = (config.ltm_token_counter_mode or "approx").strip().lower()
+    if mode == "tiktoken":
+        try:
+            import tiktoken  # type: ignore
+
+            enc = tiktoken.get_encoding("cl100k_base")
+            return len(enc.encode(text or ""))
+        except Exception as e:
+            logger.warning(f"[WARN][LTM]: tiktoken 计数失败，回退 approx err={e!r}")
+    # approx: 中文/英文混合场景做保守估算
+    return max(1, int(len(text or "") / 2))
+
+
+def _split_memory_preamble_and_body(text: str) -> Tuple[str, str]:
+    marker = "# 用户身份"
+    idx = text.find(marker)
+    if idx < 0:
+        return "", text
+    return text[:idx].rstrip(), text[idx:]
+
+
+def parse_user_profile_topics(markdown_text: str) -> Dict[MemoryTopic, List[str]]:
+    """解析 Memory.md 为三主题列表；优先识别 [用户身份] 前缀，其次识别标题下 bullet。"""
+    topics: Dict[MemoryTopic, List[str]] = {
+        "user_identity": [],
+        "user_preference": [],
+        "lessons_learned": [],
+    }
+    current_topic: Optional[MemoryTopic] = None
+    for raw in (markdown_text or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("# "):
+            title = line[2:].strip()
+            current_topic = _TITLE_TO_TOPIC.get(title)  # type: ignore[assignment]
+            continue
+        tagged = re.match(r"^\[(用户身份|用户偏好|经验教训)\]\s*(.+)$", line)
+        if tagged:
+            t = _TITLE_TO_TOPIC.get(tagged.group(1), "user_preference")  # type: ignore[assignment]
+            v = tagged.group(2).strip()
+            if v and _normalize_line(v) not in {_normalize_line(x) for x in topics[t]}:
+                topics[t].append(v)
+            continue
+        if line.startswith("- ") and current_topic:
+            v = line[2:].strip()
+            if v and _normalize_line(v) not in {_normalize_line(x) for x in topics[current_topic]}:
+                topics[current_topic].append(v)
+    return topics
+
+
+def render_user_profile_markdown(
+    topics: Dict[MemoryTopic, List[str]],
+    preamble: str = "",
+) -> str:
+    parts: List[str] = []
+    if preamble.strip():
+        parts.append(preamble.strip())
+        parts.append("---")
+    for topic in ("user_identity", "user_preference", "lessons_learned"):
+        title = _TOPIC_TITLES[topic]  # type: ignore[index]
+        entries = topics.get(topic, [])
+        parts.append(f"# {title}")
+        parts.append("")
+        if entries:
+            for item in entries:
+                parts.append(f"- {item}")
+        else:
+            parts.append("- （待补充）")
+        parts.append("")
+        parts.append("---")
+        parts.append(
+            "<!-- ltm: kind=user_profile "
+            f"topic={topic} source=explicit confidence=1.0 ts={datetime.now(timezone.utc).isoformat()} -->"
+        )
+        parts.append("")
+    return "\n".join(parts).rstrip() + "\n"
+
+
 def append_memory_entry(
     user_id: str,
     memory_kind: MemoryKind,
@@ -150,6 +243,7 @@ def append_memory_entry(
     *,
     source: MemorySource = "explicit",
     confidence: float = 1.0,
+    topic: str = "",
 ) -> str:
     """
     追加一条长期记忆到全局对应 Markdown，并写入 meta 条目（含 request user_id 审计；预留 source/confidence）。
@@ -194,10 +288,11 @@ def append_memory_entry(
                 return f"[LTM] 写入失败：无法读取现有文件（权限或占用）：{e}"
 
         max_chars = int(config.long_term_memory_max_chars_per_file)
+        topic_field = f" topic={topic.strip()}" if (topic or "").strip() else ""
         block = (
             f"\n\n---\n"
             f"<!-- ltm: kind={memory_kind} source={source} "
-            f"confidence={confidence} ts={datetime.now(timezone.utc).isoformat()} -->\n"
+            f"confidence={confidence}{topic_field} ts={datetime.now(timezone.utc).isoformat()} -->\n"
             f"{text}\n"
         )
         new_body = (existing.rstrip() + block) if existing.strip() else text
@@ -224,6 +319,7 @@ def append_memory_entry(
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "preview": preview,
                 "user_id": uid,
+                "topic": (topic or "").strip(),
             }
         )
         meta["entries"] = entries[-500:]
@@ -240,6 +336,119 @@ def append_memory_entry(
         f"[INFO][LTM]: 已追加 memory_kind={memory_kind} request_user_id={uid} path={md_path}"
     )
     return f"[LTM] 已写入 {memory_kind} → {md_path.name}（{len(text)} 字符）。"
+
+
+def append_user_profile_topic_entries(
+    user_id: str,
+    items_by_topic: Dict[MemoryTopic, List[str]],
+) -> Dict[str, Any]:
+    """
+    批量写入用户画像三主题，支持：
+    - 主题内去重
+    - 每主题最大条数 FIFO
+    - 全文件 token 门控
+    """
+    if not config.long_term_memory_enabled:
+        return {"ok": False, "reject_reason": "long_term_memory_disabled"}
+    if not config.long_term_memory_write_enabled:
+        return {"ok": False, "reject_reason": "long_term_memory_write_disabled"}
+
+    uid = (user_id or "").strip() or "default"
+    _, profile_path, meta_path = _paths_global()
+    lock = _lock_for(str(profile_path.resolve()))
+    topic_cap = max(1, int(config.ltm_topic_max_items))
+    token_limit = max(1, int(config.ltm_memory_max_tokens))
+
+    with lock:
+        existing = ""
+        if profile_path.is_file():
+            try:
+                existing = profile_path.read_text(encoding="utf-8")
+            except OSError as e:
+                return {"ok": False, "reject_reason": f"read_profile_failed:{e}"}
+        preamble, _ = _split_memory_preamble_and_body(existing)
+        topics = parse_user_profile_topics(existing)
+        topic_before_count = {k: len(v) for k, v in topics.items()}
+        token_total_before = _count_tokens(existing)
+        if token_total_before > token_limit:
+            return {
+                "ok": False,
+                "reject_reason": "memory_over_token_limit",
+                "token_total_before": token_total_before,
+                "token_total_after": token_total_before,
+                "topic_before_count": topic_before_count,
+                "topic_after_count": topic_before_count,
+                "evicted_count": 0,
+                "written_count": 0,
+            }
+
+        written_count = 0
+        evicted_count = 0
+        meta = _load_meta(meta_path)
+        entries: List[Dict[str, Any]] = list(meta.get("entries") or [])
+
+        for topic in ("user_identity", "user_preference", "lessons_learned"):
+            new_lines = items_by_topic.get(topic, [])
+            if not new_lines:
+                continue
+            normalized_existing = {_normalize_line(x) for x in topics[topic]}  # type: ignore[index]
+            for line in new_lines:
+                text = (line or "").strip()
+                if not text:
+                    continue
+                key = _normalize_line(text)
+                if key in normalized_existing:
+                    continue
+                topics[topic].append(text)  # type: ignore[index]
+                normalized_existing.add(key)
+                written_count += 1
+                entries.append(
+                    {
+                        "memory_kind": "user_profile",
+                        "source": "explicit",
+                        "confidence": 1.0,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                        "preview": text.replace("\n", " ")[:120],
+                        "user_id": uid,
+                        "topic": topic,
+                    }
+                )
+            while len(topics[topic]) > topic_cap:  # type: ignore[index]
+                topics[topic].pop(0)  # type: ignore[index]
+                evicted_count += 1
+
+        rendered = render_user_profile_markdown(topics, preamble=preamble)
+        token_total_after = _count_tokens(rendered)
+        if token_total_after > token_limit:
+            return {
+                "ok": False,
+                "reject_reason": "memory_over_token_limit_after_append",
+                "token_total_before": token_total_before,
+                "token_total_after": token_total_after,
+                "topic_before_count": topic_before_count,
+                "topic_after_count": {k: len(v) for k, v in topics.items()},
+                "evicted_count": 0,
+                "written_count": 0,
+            }
+
+        try:
+            profile_path.parent.mkdir(parents=True, exist_ok=True)
+            profile_path.write_text(rendered, encoding="utf-8")
+            meta["entries"] = entries[-500:]
+            _save_meta(meta_path, meta)
+        except OSError as e:
+            return {"ok": False, "reject_reason": f"write_failed:{e}"}
+
+    return {
+        "ok": True,
+        "reject_reason": "",
+        "token_total_before": token_total_before,
+        "token_total_after": token_total_after,
+        "topic_before_count": topic_before_count,
+        "topic_after_count": {k: len(v) for k, v in topics.items()},
+        "evicted_count": evicted_count,
+        "written_count": written_count,
+    }
 
 
 def build_injection_blocks(user_id: str) -> List[tuple[str, str]]:

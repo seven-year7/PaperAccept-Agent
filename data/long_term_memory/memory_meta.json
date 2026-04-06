@@ -23,6 +23,15 @@
       "updated_at": "2026-04-02T17:19:44.721197+00:00",
       "preview": "用户要求回答直白一点",
       "user_id": "default"
+    },
+    {
+      "memory_kind": "user_profile",
+      "source": "explicit",
+      "confidence": 1.0,
+      "updated_at": "2026-04-06T07:38:43.024762+00:00",
+      "preview": "用户爱打羽毛球。",
+      "user_id": "default",
+      "topic": "user_preference"
     }
   ]
 }
