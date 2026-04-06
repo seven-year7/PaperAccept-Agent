@@ -1,19 +1,18 @@
-<!-- 可选：保留历史标题 -->
-<!-- <h1 align="center">SuperBizAgent：基于 LangGraph 的 RAG 与论文调研系统</h1> -->
-
 <h1 align="center">SuperBizAgent：RAG 知识库与智能学术调研</h1>
 
 <p align="center">
-  语言：
-  <a href="#readme">简体中文</a>
-  （英文版可另增 <code>README_EN.md</code> 并在此链接）
+  面向科研场景的多智能体调研系统（RAG + LangGraph + 流式论文工作流）
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python" />
-  <img src="https://img.shields.io/badge/version-1.2.1-informational.svg" alt="version" />
-  <img src="https://img.shields.io/badge/FastAPI-0.109%2B-009688.svg" alt="FastAPI" />
+  <a href="#-简介">简介</a> ·
+  <a href="#-核心特性">核心特性</a> ·
+  <a href="#系统架构">系统架构</a> ·
+  <a href="#工作流程">工作流程</a> ·
+  <a href="#-快速开始">快速开始</a> ·
+  <a href="#技术栈">技术栈</a>
 </p>
+
 
 ---
 
@@ -24,27 +23,24 @@
 针对 **「读完一篇忘一篇」** 的痛点，系统将阅读过程中沉淀的 **核心观点、方法要点** 等写入 **向量知识库**，支持后续 **语义检索与问答**。这样在 **同一研究方向** 下，可以把多篇文献的要点 **放在一起对照**，更容易发现 **交叉启发与创新切入点**。
 
 同时实现 **领域 / 租户隔离**：不同课题、不同方向可以维护 **相互独立的知识库**，检索时 **不会混入无关领域的片段**，避免「搜到一堆用不上的知识」干扰判断，保证对话与调研都建立在 **当前方向的有效上下文** 之上。
----
-
-## 📸 项目预览
 
 ---
 
 ## ✨ 核心特性
 
-- 🤖 **RAG 对话**：`POST /api/chat`、`POST /api/chat_stream`（SSE）；LangChain Agent 挂载 `retrieve_knowledge`、`get_current_time`；长期记忆写入在请求入口前置拦截器执行（非 Agent 工具）。
-- 📚 **知识入库**：`.md/.txt` 上传与目录批量索引；分片支持标题递归、可选 **层级 tiktoken** 与 **语义 Markdown 分块**（`langchain-experimental` + tiktoken，见配置项）。
-- 📄 **论文多 Agent 工作流**：结构化 arXiv 查询、可选 **检索前人工确认**（`search_confirm` + `POST /api/paper/confirm_search`）、阅读节点结构化抽取、主图 `search → reading → write → report`（`write` 为子图，内含 `writePlan`）、终稿流式输出；工作区目录名与 `run_id` 对齐（时间戳到分钟，Windows 友好）。
-- 🔄 **实时流式输出**：SSE 推送 `phase` / `content` / `done` / `error` 等；确认路径含 `assistant_message_boundary` 供前端分段展示。
-- 💾 **会话持久化**：Redis Hash `rag:session:{id}` 存 `history_jsonl`；可选滚动摘要降本（每 N 轮更新 `conversation_summary`）。以及用户画像跟Agent画像设计。
-- 🧩 **论文知识库隔离**：入库 `metadata.tenant_id` 与请求 `TenantId`/`tenant_id` 对齐；内置 Web 支持「选择领域」与显式租户策略（`RAG_REQUIRE_EXPLICIT_TENANT_FOR_UPLOAD` 等）。
-- 🛡️ **RAG 可信度**：距离/间隔/平均门控 + 检索超时降级 + `[INFO][RAG_OBS]` 观测，减少「假 RAG」与检索卡死。
+- 🤖 **RAG 对话接口**：`POST /api/chat`、`POST /api/chat_stream`（SSE）；LangChain Agent 挂载 `retrieve_knowledge` 与 `get_current_time`；长期记忆由请求前置拦截器处理（非 Agent 工具）。
+- 📚 **知识入库能力**：支持 `.md/.txt` 上传与目录批量索引；分片支持标题递归、可选 **层级 tiktoken** 与 **语义 Markdown 分块**（`langchain-experimental` + tiktoken）。
+- 📄 **论文多 Agent 工作流**：支持结构化 arXiv 查询与可选人工确认；主图为 `search -> reading -> write -> report`，其中 `write` 为子图并包含 `writePlan`，终稿支持流式输出。
+- 🔄 **实时流式事件**：SSE 推送 `phase` / `content` / `done` / `error`；确认链路含 `assistant_message_boundary` 以支持前端分段展示。
+- 💾 **会话与长期记忆**：Redis Hash `rag:session:{id}` 持久化 `history_jsonl`；支持可选滚动摘要；长期记忆用于沉淀用户画像与偏好信息。
+- 🧩 **知识库隔离检索**：入库 `metadata.tenant_id` 与请求 `TenantId`/`tenant_id` 对齐；支持显式租户策略（如 `RAG_REQUIRE_EXPLICIT_TENANT_FOR_UPLOAD`）。
+- 🛡️ **RAG 可靠性治理**：距离/间隔/平均门控 + 检索超时降级 + `[INFO][RAG_OBS]` 观测，降低“假 RAG”与检索卡死风险。
 
 ---
 
 ## 系统架构
 
-**简要说明**：实现上采用 **感知 → 认知 → 行动 → 交互** 四层模型（见附录 **A**）。论文链路在 `app/agent/paper/` 由 LangGraph 编排：`search → reading → write → report`，其中 `write` 为子图（`writePlan` → `writeExecute` → `writeAudit`，`REPLAN` 回到子图内 `writePlan`，`REVISE` 回到 `writeExecute`），失败经 `error_finalize` 兜底。RAG 与论文写作可选叠加 `retrieve_knowledge`（`PAPER_WRITING_RAG_ENABLED`）。
+**简要说明**：实现上采用 **感知 -> 认知 -> 行动 -> 交互** 四层模型（见附录 **A**）。论文链路在 `app/agent/paper/` 由 LangGraph 编排：`search -> reading -> write -> report`，其中 `write` 为子图（`writePlan` -> `writeExecute` -> `writeAudit`，`REPLAN` 回到子图内 `writePlan`，`REVISE` 回到 `writeExecute`），失败经 `error_finalize` 兜底。RAG 与论文写作可选叠加 `retrieve_knowledge`（`PAPER_WRITING_RAG_ENABLED`）。
 
 更细的节点职责、条件函数与 SSE 语义，见附录 **A** 与 **D**（API），源码入口：`app/agent/paper/graph.py`、`write_subgraph.py`、`condition_handler.py`。
 
