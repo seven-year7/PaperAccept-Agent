@@ -64,7 +64,7 @@ async def paper_research_stream(request: PaperResearchStreamRequest):
     """论文调研工作流 SSE。
 
     data 为 JSON，type 取值示例：phase、content、search_confirm（开启人工确认时先于 search_confirm 有一条 content 说明与 run_id）、assistant_message_boundary（仅人工确认路径：确认已应用后、arXiv 检索前一次，供前端拆助手气泡）、reading_progress、writing、error、done；失败路径含 phase.node=error_finalize 与兜底 content。
-    主图节点含 `write`（嵌套子图）。子图内 phase.data.node：`writePlan`、`writeExecute`、`writeAudit`（全局 audit，OK/REVISE/REPLAN 后再整批 execute 或改纲）；子图结束后进入 `report`。
+    主图节点含 `write`（嵌套子图）。子图内 phase.data.node：`writePlan`（大纲）、`writeExecute`、`writeAudit`（全局 audit，OK/REVISE/REPLAN 时子图内回到 writePlan 或再 execute）；子图结束后进入 `report`。
     """
 
     async def event_generator():

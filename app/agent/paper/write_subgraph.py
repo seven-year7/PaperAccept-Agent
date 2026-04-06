@@ -1,7 +1,7 @@
 """
 /**
  * @Module: app/agent/paper/write_subgraph.py
- * @Description: 写作子图（车间「写作」）：writeExecute → writeAudit → 条件回路；writePlan 已抬至主图节点 analysis。
+ * @Description: 写作子图（车间「写作」）：writePlan → writeExecute → writeAudit → 条件回路；REPLAN 时回到子图内 writePlan。
  * @Interface: build_paper_write_subgraph / WRITE_SUBGRAPH_ROUTE_END
  */
 """
@@ -14,10 +14,18 @@ from langgraph.graph import END, START, StateGraph
 
 from app.agent.paper.node_guard import wrap_paper_node_soft
 from app.agent.paper.nodes.writing_execute_node import make_writing_execute_node
+from app.agent.paper.nodes.writing_plan_node import make_writing_plan_node
 from app.agent.paper.nodes.writing_reviewer_node import make_writing_reviewer_node
 from app.agent.paper.state import PaperWorkflowState
 
 WRITE_SUBGRAPH_ROUTE_END = "WRITE_SUBGRAPH_END"
+
+
+def route_after_write_plan(state: PaperWorkflowState) -> str:
+    """writePlan 之后：若已登记写作错误则结束子图，否则进入章节写作。"""
+    if (state.get("writing_node_error") or "").strip():
+        return WRITE_SUBGRAPH_ROUTE_END
+    return "writeExecute"
 
 
 def route_after_write_execute(state: PaperWorkflowState) -> str:
@@ -28,12 +36,12 @@ def route_after_write_execute(state: PaperWorkflowState) -> str:
 
 
 def route_after_write_audit(state: PaperWorkflowState) -> str:
-    """writeAudit 之后：若写作失败则结束子图；REPLAN 时结束子图由主图回到 analysis；否则 REVISE/OK 按原语义。"""
+    """writeAudit 之后：若写作失败则结束子图；REPLAN 回到子图内 writePlan；否则 REVISE/OK 按原语义。"""
     if (state.get("writing_node_error") or "").strip():
         return WRITE_SUBGRAPH_ROUTE_END
     nxt = (state.get("writing_route_next") or WRITE_SUBGRAPH_ROUTE_END).strip()
     if nxt in ("writePlan", "writing_plan"):
-        return WRITE_SUBGRAPH_ROUTE_END
+        return "writePlan"
     if nxt in (WRITE_SUBGRAPH_ROUTE_END, "report", "END", "__end__"):
         return WRITE_SUBGRAPH_ROUTE_END
     if nxt == "writeExecute":
@@ -44,8 +52,18 @@ def route_after_write_audit(state: PaperWorkflowState) -> str:
 
 
 def build_paper_write_subgraph(event_queue: asyncio.Queue):
-    """编译写作子图；入口为 writeExecute（大纲已由主图 analysis 产出）。"""
+    """编译写作子图；入口为 writePlan（大纲规划），其后 execute/audit 与 REPLAN 回路。"""
     builder = StateGraph(PaperWorkflowState)
+    builder.add_node(
+        "writePlan",
+        wrap_paper_node_soft(
+            "writePlan",
+            "writing_node_error",
+            make_writing_plan_node(event_queue, phase_node="writePlan"),
+            event_queue,
+            phase_sse_node="writePlan",
+        ),
+    )
     builder.add_node(
         "writeExecute",
         wrap_paper_node_soft(
@@ -73,7 +91,15 @@ def build_paper_write_subgraph(event_queue: asyncio.Queue):
         ),
     )
 
-    builder.add_edge(START, "writeExecute")
+    builder.add_edge(START, "writePlan")
+    builder.add_conditional_edges(
+        "writePlan",
+        route_after_write_plan,
+        {
+            "writeExecute": "writeExecute",
+            WRITE_SUBGRAPH_ROUTE_END: END,
+        },
+    )
     builder.add_conditional_edges(
         "writeExecute",
         route_after_write_execute,
@@ -86,6 +112,7 @@ def build_paper_write_subgraph(event_queue: asyncio.Queue):
         "writeAudit",
         route_after_write_audit,
         {
+            "writePlan": "writePlan",
             "writeExecute": "writeExecute",
             WRITE_SUBGRAPH_ROUTE_END: END,
         },

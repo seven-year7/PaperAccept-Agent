@@ -26,7 +26,7 @@ elasticsearch>=8.12.0,<9
 tiktoken>=0.7.0
 arxiv>=2.1.0
 
-# 论文写作链路：主图五车间 + condition_handler + error_finalize；子图仅 writeExecute/writeAudit；PAPER_WRITING_RAG_ENABLED 等见 readme。无新增 PyPI 依赖。Mock：tests/test_paper_workflow_e2e.py；路由单测：tests/test_paper_condition_handler.py；整图真链路：tests/test_paper_workflow_live.py（PAPER_WORKFLOW_LIVE_TEST=1；见 readme）。
+# 论文写作链路：主图 search→reading→write→report + condition_handler + error_finalize；写作子图 writePlan→writeExecute→writeAudit；PAPER_WRITING_RAG_ENABLED 等见 README。无新增 PyPI 依赖。Mock：tests/test_paper_workflow_e2e.py；路由单测：tests/test_paper_condition_handler.py；整图真链路：tests/test_paper_workflow_live.py（PAPER_WORKFLOW_LIVE_TEST=1；见 README）。
 # 统一聊天意图路由（CHAT_PAPER_ROUTE_*）仅使用已有 langchain-openai / pydantic，无新增依赖；见 README.md「附录 D」与 tests/test_chat_intent_router.py。
 # 项目说明文档：README.md 已改为「首页概览 + 附录」结构（与 Paper-Agent 式排版类似），环境变量全文仍以 app/config.py 为准。
 # README「目录结构」：app/ 下 api、agent/paper、tools、models 为文件级；core、services、utils 仅目录级说明，无 PyPI 变更。

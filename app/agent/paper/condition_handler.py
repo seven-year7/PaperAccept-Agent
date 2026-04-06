@@ -1,7 +1,7 @@
 """
 /**
  * @Module: app/agent/paper/condition_handler.py
- * @Description: 论文五车间流水线「下一步去哪」：检查对应车间错误登记表，失败则转 error_finalize，否则进下一车间或 END。
+ * @Description: 论文主图流水线「下一步去哪」：检查车间错误登记表，失败则转 error_finalize；reading 后进写作子图；子图结束后进 report。
  * @Interface: route_after_stage
  */
 """
@@ -14,12 +14,11 @@ from langgraph.graph import END
 
 from app.agent.paper.state import PaperWorkflowState
 
-CompletedStage = Literal["search", "reading", "analysis", "report"]
+CompletedStage = Literal["search", "reading", "report"]
 
-_STAGE_ERROR_KEY: dict[CompletedStage, str] = {
+_STAGE_ERROR_KEY: dict[str, str] = {
     "search": "search_node_error",
     "reading": "reading_node_error",
-    "analysis": "analysis_node_error",
     "writing": "writing_node_error",
     "report": "report_node_error",
 }
@@ -42,8 +41,6 @@ def route_after_stage(state: PaperWorkflowState, completed: CompletedStage) -> s
     if completed == "search":
         return "reading"
     if completed == "reading":
-        return "analysis"
-    if completed == "analysis":
         return "write"
     if completed == "report":
         return END
@@ -54,14 +51,10 @@ def route_after_write_node(state: PaperWorkflowState) -> str:
     """
     主图在「写作」子图整段执行结束后的路由：
     - 写作登记错误 → error_finalize
-    - 子图因 REPLAN 退出且 writing_route_next 指向 writePlan → 回到 analysis
-    - 否则 → report
+    - 否则 → report（REPLAN 在子图内完成，不再回到主图节点）
     """
     if (state.get("writing_node_error") or "").strip():
         return "error_finalize"
-    nxt = (state.get("writing_route_next") or "").strip()
-    if nxt in ("writePlan", "writing_plan"):
-        return "analysis"
     return "report"
 
 

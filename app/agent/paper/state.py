@@ -44,10 +44,9 @@ class PaperWorkflowState(TypedDict, total=False):
     errors: Annotated[List[str], operator.add]
     assembled_report: str
     final_report_path: str
-    # 五车间错误登记表：非空表示该车间的失败原因（软失败，图经 condition_handler 转 error_finalize）
+    # 主图各车间与子图「写作」错误登记表：非空表示失败原因（软失败，图经 condition_handler 转 error_finalize）
     search_node_error: str
     reading_node_error: str
-    analysis_node_error: str
     writing_node_error: str
     report_node_error: str
     workflow_failed: bool

@@ -19,10 +19,11 @@
 
 ## 📖 简介
 
-**SuperBizAgent**（`super-biz-agent-py`）是一套面向研究与业务场景的 **RAG 知识问答** 与 **论文调研多智能体工作流** 后端：在 FastAPI 上提供流式对话（SSE）、文档向量化入库（Milvus，可选 Elasticsearch 混合检索）、以及基于 **LangGraph** 的 arXiv 检索 → 阅读抽取 → 大纲规划 → 写作子图（执行/审稿）→ 报告润色与落盘的完整链路。内置静态页（`static/`）可作为「私人论文助手」类对话入口；统一聊天路由可将用户意图分流到 RAG 对话或论文整图 SSE。
+这是一款面向 **研究生与科研场景** 的智能体系统：把「找论文、读论文、记要点、跨文献思考」串成一条闭环。用户可以用自然语言 **检索并拉取文献**（如 arXiv 等来源），并对论文 **自动阅读、抽取与总结**，减少手工下载与通读全文的时间成本。
 
-更细的**四层架构、环境变量表、API 列表、RAG 门控与超时**等，见下文 **「附录」** 各节（由原实现手册合并保留，便于排障与二次开发）。
+针对 **「读完一篇忘一篇」** 的痛点，系统将阅读过程中沉淀的 **核心观点、方法要点** 等写入 **向量知识库**，支持后续 **语义检索与问答**。这样在 **同一研究方向** 下，可以把多篇文献的要点 **放在一起对照**，更容易发现 **交叉启发与创新切入点**。
 
+同时实现 **领域 / 租户隔离**：不同课题、不同方向可以维护 **相互独立的知识库**，检索时 **不会混入无关领域的片段**，避免「搜到一堆用不上的知识」干扰判断，保证对话与调研都建立在 **当前方向的有效上下文** 之上。
 ---
 
 ## 📸 项目预览
@@ -33,7 +34,7 @@
 
 - 🤖 **RAG 对话**：`POST /api/chat`、`POST /api/chat_stream`（SSE）；LangChain Agent 挂载 `retrieve_knowledge`、`get_current_time`、可选 `append_long_term_memory`。
 - 📚 **知识入库**：`.md/.txt` 上传与目录批量索引；分片支持标题递归、可选 **层级 tiktoken** 与 **语义 Markdown 分块**（`langchain-experimental` + tiktoken，见配置项）。
-- 📄 **论文多 Agent 工作流**：结构化 arXiv 查询、可选 **检索前人工确认**（`search_confirm` + `POST /api/paper/confirm_search`）、阅读节点结构化抽取、主图五车间 + 写作子图条件路由、终稿流式输出；工作区目录名与 `run_id` 对齐（时间戳到分钟，Windows 友好）。
+- 📄 **论文多 Agent 工作流**：结构化 arXiv 查询、可选 **检索前人工确认**（`search_confirm` + `POST /api/paper/confirm_search`）、阅读节点结构化抽取、主图 `search → reading → write → report`（`write` 为子图，内含 `writePlan`）、终稿流式输出；工作区目录名与 `run_id` 对齐（时间戳到分钟，Windows 友好）。
 - 🔄 **实时流式输出**：SSE 推送 `phase` / `content` / `done` / `error` 等；确认路径含 `assistant_message_boundary` 供前端分段展示。
 - 💾 **会话持久化**：Redis Hash `rag:session:{id}` 存 `history_jsonl`；可选滚动摘要降本（每 N 轮更新 `conversation_summary`）。以及用户画像跟Agent画像设计。
 - 🧩 **论文知识库隔离**：入库 `metadata.tenant_id` 与请求 `TenantId`/`tenant_id` 对齐；内置 Web 支持「选择领域」与显式租户策略（`RAG_REQUIRE_EXPLICIT_TENANT_FOR_UPLOAD` 等）。
@@ -43,7 +44,7 @@
 
 ## 系统架构
 
-**简要说明**：实现上采用 **感知 → 认知 → 行动 → 交互** 四层模型（见附录 **A**）。论文链路在 `app/agent/paper/` 由 LangGraph 编排：`search → reading → analysis → write → report`，其中 `write` 为子图（`writeExecute` / `writeAudit` 与 `REPLAN`/`REVISE` 路由），失败经 `error_finalize` 兜底。RAG 与论文写作可选叠加 `retrieve_knowledge`（`PAPER_WRITING_RAG_ENABLED`）。
+**简要说明**：实现上采用 **感知 → 认知 → 行动 → 交互** 四层模型（见附录 **A**）。论文链路在 `app/agent/paper/` 由 LangGraph 编排：`search → reading → write → report`，其中 `write` 为子图（`writePlan` → `writeExecute` → `writeAudit`，`REPLAN` 回到子图内 `writePlan`，`REVISE` 回到 `writeExecute`），失败经 `error_finalize` 兜底。RAG 与论文写作可选叠加 `retrieve_knowledge`（`PAPER_WRITING_RAG_ENABLED`）。
 
 更细的节点职责、条件函数与 SSE 语义，见附录 **A** 与 **D**（API），源码入口：`app/agent/paper/graph.py`、`write_subgraph.py`、`condition_handler.py`。
 
@@ -63,9 +64,8 @@
 1. **输入**：自然语言需求（经统一路由或直连 `POST /api/paper/research_stream`）。
 2. **检索**：LLM 生成 `StructuredArxivQuery`；若开启人工确认则推送 `search_confirm` 并阻塞至 `confirm_search`。
 3. **阅读**：并行阅读多篇 arXiv 条目，结构化抽取并写入 `readings.md` 等。
-4. **分析/规划**：大纲规划（SSE `phase.node` 仍为 `writePlan` 以兼容旧前端）。
-5. **写作子图**：批量章节执行与全局审稿循环；可选章节内本地多轮审稿。
-6. **报告**：合并章节并流式润色，落盘 `report.md`；可选 `PAPER_REPORT_AUTO_INDEX_ENABLED` 写入向量库。
+4. **写作子图**：首步大纲规划（SSE `phase.node` 为 `writePlan`），再批量章节执行与全局审稿循环；`REPLAN` 在子图内重跑 `writePlan`；可选章节内本地多轮审稿。
+5. **报告**：合并章节并流式润色，落盘 `report.md`；可选 `PAPER_REPORT_AUTO_INDEX_ENABLED` 写入向量库。
 
 ---
 
@@ -88,8 +88,8 @@ Agent-Create/（或你的项目根目录）
 │   ├── agent/                       # LangGraph 等业务编排（当前主要为论文工作流）
 │   │   ├── __init__.py
 │   │   └── paper/
-│   │       ├── graph.py             # 主图：search → reading → analysis → write → report
-│   │       ├── write_subgraph.py    # 写作子图：writeExecute / writeAudit 与 REPLAN、REVISE
+│   │       ├── graph.py             # 主图：search → reading → write → report
+│   │       ├── write_subgraph.py    # 写作子图：writePlan → writeExecute → writeAudit；REPLAN、REVISE
 │   │       ├── condition_handler.py # 各车间结束后的下一跳路由、错误进入 error_finalize
 │   │       ├── state.py             # 论文状态 TypedDict / 字段定义
 │   │       ├── schemas.py           # StructuredArxivQuery、ReadingExtract 等 Pydantic 模型
@@ -100,8 +100,8 @@ Agent-Create/（或你的项目根目录）
 │   │       ├── nodes/               # 主图车间节点实现
 │   │       │   ├── search_node.py
 │   │       │   ├── reading_node.py
-│   │       │   ├── writing_plan_node.py    # 大纲规划（SSE phase 仍为 writePlan）
-│   │       │   ├── writing_execute_node.py # 委托写作子图入口
+│   │       │   ├── writing_plan_node.py    # 大纲规划（子图节点 writePlan）
+│   │       │   ├── writing_execute_node.py # 子图 writeExecute
 │   │       │   ├── writing_reviewer_node.py
 │   │       │   ├── report_node.py
 │   │       │   ├── error_finalize_node.py  # 兜底说明与 done 语义
@@ -243,7 +243,7 @@ Agent-Create/（或你的项目根目录）
 以下配置项定义于 `app/config.py`（通过项目根 `.env` 加载）：
 
 - **应用**：`APP_NAME`、`APP_VERSION`、`HOST`、`PORT`
-- **模型与嵌入**：`OPENROUTER_API_KEY`、`OPENROUTER_API_BASE`、`OPENROUTER_MODEL`、`OPENROUTER_EMBEDDING_MODEL`；烟测 `python scripts/test_openrouter_embedding.py`
+- **模型与嵌入**：`OPENROUTER_API_KEY`、`OPENROUTER_API_BASE`、`OPENROUTER_MODEL`、`OPENROUTER_EMBEDDING_MODEL`；嵌入烟测 `python scripts/test_openrouter_embedding.py`；**对话（与 RAG 同 KEY/BASE/RAG_MODEL）烟测** `python scripts/test_openrouter_chat.py`（可选 `python scripts/test_openrouter_chat.py --also-summary`）
 - **Milvus**：`MILVUS_HOST`、`MILVUS_PORT`、`MILVUS_TIMEOUT`；烟测 `python scripts/test_milvus_connection.py`
 - **RAG**：`RAG_TOP_K`、`RAG_MODEL`、`CHUNK_MAX_SIZE`、`CHUNK_OVERLAP`；**层级分块** `RAG_HIERARCHICAL_CHUNKS_ENABLED` 与 tiktoken 参数；**语义 Markdown 分块** `RAG_MARKDOWN_SEMANTIC_CHUNK_ENABLED` 与 `RAG_SEMANTIC_*`；**上传显式领域** `RAG_REQUIRE_EXPLICIT_TENANT_FOR_UPLOAD`；**Redis** `REDIS_URL`、`RAG_SESSION_TTL_SECONDS`、`RAG_SESSION_MAX_EVENTS`、`RAG_SESSION_STORE_SYSTEM`；**租户** `RAG_TENANT_ISOLATION_ENABLED`；**召回导出** `python scripts/dump_rag_recall.py`；**混合检索** `RAG_HYBRID_ENABLED`、`ELASTICSEARCH_*`、`RAG_HYBRID_*`、`python scripts/test_elasticsearch_connection.py`；**长期记忆** `LONG_TERM_MEMORY_*`
 - **论文工作流**：`PAPER_ARXIV_TOOL_ENABLED`、`PAPER_WORKSPACE_ROOT`、`PAPER_WORKSPACE_TIMESTAMP_UTC`、`PAPER_ARXIV_*`、`PAPER_WRITING_RAG_ENABLED`、`PAPER_READ_MAX_CONCURRENT`、`PAPER_SECTION_*`、`PAPER_GLOBAL_REVIEW_*`、`PAPER_MODEL`、`PAPER_READING_SUMMARY_MAX_CHARS`、`PAPER_REPORT_STREAM_MAX_TOKENS`、`PAPER_REPORT_AUTO_INDEX_ENABLED`、`PAPER_WORKFLOW_TIMEOUT_MS`、`StructuredArxivQuery` 字段说明、`PAPER_SEARCH_HUMAN_CONFIRM_ENABLED` 与 `confirm_search` / `PAPER_SEARCH_CONFIRM_*`、**助手消息分段** `assistant_message_boundary`、SSE 失败语义等

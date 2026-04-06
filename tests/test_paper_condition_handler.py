@@ -1,7 +1,7 @@
 """
 /**
  * @Module: tests/test_paper_condition_handler.py
- * @Description: 论文五车间 condition_handler 与写作子图后主图路由的单元测试。
+ * @Description: 论文流水线 condition_handler 与写作子图后主图路由的单元测试。
  */
 """
 
@@ -32,9 +32,15 @@ def test_route_after_report_ok_goes_end():
     assert route_after_stage(s, "report") == END
 
 
-def test_route_after_write_replan_goes_analysis():
+def test_route_after_reading_ok_goes_write():
+    s: dict = {}
+    assert route_after_stage(s, "reading") == "write"
+
+
+def test_route_after_write_replan_routes_to_report():
+    """REPLAN 在写作子图内处理；子图结束后主图不再根据 writePlan 跳回独立节点。"""
     s = {"writing_route_next": "writePlan"}
-    assert route_after_write_node(s) == "analysis"
+    assert route_after_write_node(s) == "report"
 
 
 def test_route_after_write_ok_goes_report():

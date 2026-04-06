@@ -4,7 +4,7 @@
  * @Description: 「大纲规划」独立智能体：含首版/Replan 两套系统提示词；可选知识库检索 + 结构化 OutlineResponse。
  * @Interface: run_writing_plan
  *
- * 对应子图节点：writePlan（LangGraph 入口见 nodes/writing_plan_node.py，仅 SSE）。
+ * 对应写作子图节点：writePlan（入口见 nodes/writing_plan_node.py）。
  */
 """
 

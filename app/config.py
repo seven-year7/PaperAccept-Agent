@@ -179,7 +179,7 @@ class Settings(BaseSettings):
     # LLM 判为 paper_workflow 的最低置信度；低于且未规则命中则走 RAG
     chat_paper_route_confidence_threshold: float = 0.65
     # 意图分类专用模型；空则复用 rag_summary_model
-    chat_paper_route_intent_model: str = ""
+    chat_paper_route_intent_model: str = "x-ai/grok-4.1-fast"
 
 
 # 全局配置实例

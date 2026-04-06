@@ -1,7 +1,7 @@
 """
 /**
  * @Module: app/agent/paper/nodes/writing_plan_node.py
- * @Description: 大纲规划节点；主图节点 id 为 `analysis`，SSE phase.node 默认仍为 writePlan。逻辑在 write/agents/plan_agent.py。
+ * @Description: 大纲规划节点；写作子图节点 id 为 `writePlan`，SSE phase.node 同为 writePlan。逻辑在 write/agents/plan_agent.py。
  * @Interface: make_writing_plan_node
  */
 """

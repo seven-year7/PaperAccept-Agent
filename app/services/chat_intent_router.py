@@ -143,7 +143,7 @@ async def _classify_with_llm(question: str) -> _LLMIntentSchema | None:
                     dedent(
                         """
                         你是对话路由分类器。根据用户最新一条消息判断应走哪条后端路径。
-                        - paper_workflow：用户明确要求「系统性文献/论文调研、多阶段流水线、撰写综述或调研报告、按主题批量检索并产出结构化报告」等需要完整 arXiv 检索→阅读摘要→分章写作→终稿 的场景。
+                        - paper_workflow：用户明确要求「系统性文献/论文调研、某领域相关论文、撰写综述或调研报告、按主题批量检索并产出结构化报告」等需要完整 arXiv 检索→阅读摘要→分章写作→终稿 的场景。
                         - general_rag：普通问答、知识库检索、闲聊、写一段短文等。
                         输出 intent、confidence（0~1）、normalized_user_request（仅当 paper_workflow 时填写整理后的需求，否则留空字符串）。
                         """
