@@ -28,13 +28,10 @@
 
 ## ✨ 核心特性
 
-- 🤖 **RAG 对话接口**：`POST /api/chat`、`POST /api/chat_stream`（SSE）；LangChain Agent 挂载 `retrieve_knowledge` 与 `get_current_time`；长期记忆由请求前置拦截器处理（非 Agent 工具）。
-- 📚 **知识入库能力**：支持 `.md/.txt` 上传与目录批量索引；分片支持标题递归、可选 **层级 tiktoken** 与 **语义 Markdown 分块**（`langchain-experimental` + tiktoken）。
-- 📄 **论文多 Agent 工作流**：支持结构化 arXiv 查询与可选人工确认；主图为 `search -> reading -> write -> report`，其中 `write` 为子图并包含 `writePlan`，终稿支持流式输出。
-- 🔄 **实时流式事件**：SSE 推送 `phase` / `content` / `done` / `error`；确认链路含 `assistant_message_boundary` 以支持前端分段展示。
-- 💾 **会话与长期记忆**：Redis Hash `rag:session:{id}` 持久化 `history_jsonl`；支持可选滚动摘要；长期记忆用于沉淀用户画像与偏好信息。
-- 🧩 **知识库隔离检索**：入库 `metadata.tenant_id` 与请求 `TenantId`/`tenant_id` 对齐；支持显式租户策略（如 `RAG_REQUIRE_EXPLICIT_TENANT_FOR_UPLOAD`）。
-- 🛡️ **RAG 可靠性治理**：距离/间隔/平均门控 + 检索超时降级 + `[INFO][RAG_OBS]` 观测，降低“假 RAG”与检索卡死风险。
+- 🤖 **多智能体架构设计**：基于 LangGraph 构建科研全链路智能体，打通文献检索、自动化研读与知识沉淀流程。核心 WriteAgent 采用 Planner-Executor-Auditor（计划-执行-审计）层次化模式。
+- 📚 **RAG 召回优化**：针对科研文档设计了 Semantic Chunking 策略（标题增强 + 语义短句切分），解决传统切片导致的语义断裂问题；引入领域参数过滤机制实现知识库检索隔离，确保不同研究方向下的上下文纯净度，召回准确度提升显著。
+- 🛡️ **系统可靠性**：设计了统一的 `error_finalize` 兜底节点与多级降级策略；针对 RAG 检索超时、模型生成异常等边界情况实现平滑回退与自动重试，确保 Agent 长路径工作流下不卡死、无据不强答。
+- 💾 **多维记忆管理系统**：利用 Redis 实现多轮对话的 Session 状态持久化；构建 Long-term Memory 模块，通过提取并沉淀用户画像（如研究偏好、用户身份等）。
 
 ---
 
