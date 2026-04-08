@@ -142,6 +142,22 @@ def make_search_agent_node(
             raise RuntimeError(f"arxiv_search: {e}") from e
 
         paper_dicts = [p.model_dump() for p in papers]
+        if not paper_dicts:
+            pl.warning(
+                "[PaperWF] search_empty_result event=arxiv_zero_results node=search "
+                "action=abort_workflow"
+            )
+            await event_queue.put(
+                {
+                    "type": "phase",
+                    "data": {
+                        "node": "search",
+                        "status": "end",
+                        "detail": {"paper_count": 0, "aborted": True},
+                    },
+                }
+            )
+            raise RuntimeError("未检索到相关论文，请调整关键词、时间范围或分类后重试。")
         pl.info(
             f"[PaperWF] search_complete event=search_end node=search "
             f"paper_count={len(paper_dicts)} human_confirm={human_confirm_enabled}"
