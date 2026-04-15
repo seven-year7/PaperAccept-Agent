@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from docling.document_converter import DocumentConverter
 from loguru import logger
 
 from app.config import config
@@ -65,6 +66,7 @@ class VectorIndexService:
     def __init__(self):
         """初始化向量索引服务"""
         self.upload_path = "./uploads"
+        self.docling_converter = DocumentConverter()
         logger.info("向量索引服务初始化完成")
 
     def index_directory(
@@ -95,7 +97,11 @@ class VectorIndexService:
             result.directory_path = str(dir_path)
 
             # 获取所有支持的文件
-            files = list(dir_path.glob("*.txt")) + list(dir_path.glob("*.md"))
+            files = (
+                list(dir_path.glob("*.txt"))
+                + list(dir_path.glob("*.md"))
+                + list(dir_path.glob("*.pdf"))
+            )
 
             if not files:
                 logger.warning(f"目录中没有找到支持的文件: {target_path}")
@@ -160,9 +166,16 @@ class VectorIndexService:
         logger.info(f"开始索引文件: {path}")
 
         try:
-            # 1. 读取文件内容
-            content = path.read_text(encoding="utf-8")
-            logger.info(f"读取文件: {path}, 内容长度: {len(content)} 字符")
+            # 1. 读取文件内容（PDF 走 Docling 转 Markdown）
+            if path.suffix.lower() == ".pdf":
+                conversion_result = self.docling_converter.convert(str(path))
+                content = conversion_result.document.export_to_markdown()
+                logger.info(
+                    f"读取 PDF 并导出 Markdown: {path}, 内容长度: {len(content)} 字符"
+                )
+            else:
+                content = path.read_text(encoding="utf-8")
+                logger.info(f"读取文件: {path}, 内容长度: {len(content)} 字符")
 
             # 2. 删除该文件的旧数据（如果存在）
             normalized_path = path.as_posix()

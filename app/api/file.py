@@ -23,7 +23,8 @@ router = APIRouter()
 # 文件上传后存储的路径
 UPLOAD_DIR = Path("./uploads")
 # 支持的文件类型
-ALLOWED_EXTENSIONS = ["txt", "md"]
+ALLOWED_TEXT_EXTENSIONS = ["txt", "md"]
+ALLOWED_PDF_EXTENSIONS = ["pdf"]
 # 单个文件支持最大大小
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
@@ -41,16 +42,19 @@ def _resolve_upload_tenant_id(tenant_id: str) -> str:
     return normalized
 
 
-async def _validate_upload_file(file: UploadFile) -> tuple[bytes, str]:
+async def _validate_upload_file(
+    file: UploadFile,
+    allowed_extensions: list[str],
+) -> tuple[bytes, str]:
     """校验扩展名与大小，返回文件字节与规范化文件名。"""
     if not file.filename:
         raise HTTPException(status_code=400, detail="文件名不能为空")
     safe_filename = _sanitize_filename(file.filename)
     file_extension = _get_file_extension(safe_filename)
-    if file_extension not in ALLOWED_EXTENSIONS:
+    if file_extension not in allowed_extensions:
         raise HTTPException(
             status_code=400,
-            detail=f"不支持的文件格式，仅支持: {', '.join(ALLOWED_EXTENSIONS)}",
+            detail=f"不支持的文件格式，仅支持: {', '.join(allowed_extensions)}",
         )
     content = await file.read()
     if len(content) > MAX_FILE_SIZE:
@@ -69,7 +73,7 @@ async def upload_select(
     """
     try:
         _ = _resolve_upload_tenant_id(tenant_id)
-        content, safe_filename = await _validate_upload_file(file)
+        content, safe_filename = await _validate_upload_file(file, ALLOWED_TEXT_EXTENSIONS)
         staging_id = new_staging_id()
         write_staging_blob(staging_id, safe_filename, content)
         logger.info(
@@ -169,7 +173,7 @@ async def upload_file(
     """
     try:
         resolved_tenant = _resolve_upload_tenant_id(tenant_id)
-        content, safe_filename = await _validate_upload_file(file)
+        content, safe_filename = await _validate_upload_file(file, ALLOWED_TEXT_EXTENSIONS)
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         file_path = UPLOAD_DIR / safe_filename
         if file_path.exists():
@@ -244,6 +248,57 @@ async def index_directory(
     except Exception as e:
         logger.error(f"索引目录失败: {e}")
         raise HTTPException(status_code=500, detail=f"索引目录失败: {e}") from e
+
+
+@router.post("/upload/pdf")
+async def upload_pdf_file(
+    file: UploadFile = File(...),
+    tenant_id: str = Form("default"),
+):
+    """
+    PDF 单阶段上传：保存到 uploads/ 并立即建索引。
+    """
+    try:
+        resolved_tenant = _resolve_upload_tenant_id(tenant_id)
+        content, safe_filename = await _validate_upload_file(file, ALLOWED_PDF_EXTENSIONS)
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        file_path = UPLOAD_DIR / safe_filename
+        if file_path.exists():
+            logger.info(f"PDF 文件已存在，将覆盖: {file_path}")
+            file_path.unlink()
+        file_path.write_bytes(content)
+        logger.info(f"PDF 文件上传成功: {file_path}")
+        try:
+            logger.info(f"开始为 PDF 文件创建向量索引: {file_path}")
+            embed_chunk_count = vector_index_service.index_single_file(
+                str(file_path),
+                tenant_id=resolved_tenant,
+            )
+            logger.info(f"PDF 向量索引创建成功: {file_path}")
+            logger.info(
+                f"[INFO][Embedding]: PDF 上传嵌入分块数 filename={safe_filename} "
+                f"chunk_count={embed_chunk_count}"
+            )
+        except Exception as e:
+            logger.error(f"PDF 向量索引创建失败: {file_path}, 错误: {e}")
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "code": 200,
+                "message": "success",
+                "data": {
+                    "filename": safe_filename,
+                    "file_path": str(file_path),
+                    "size": len(content),
+                },
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"PDF 文件上传失败: {e}")
+        raise HTTPException(status_code=500, detail=f"PDF 文件上传失败: {e}") from e
 
 
 def _get_file_extension(filename: str) -> str:

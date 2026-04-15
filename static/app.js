@@ -116,7 +116,9 @@ class SuperBizAgentApp {
         this.toolsMenu = document.getElementById('toolsMenu');
         this.selectDomainItem = document.getElementById('selectDomainItem');
         this.uploadFileItem = document.getElementById('uploadFileItem');
+        this.uploadPdfItem = document.getElementById('uploadPdfItem');
         this.fileInput = document.getElementById('fileInput');
+        this.pdfFileInput = document.getElementById('pdfFileInput');
         this.domainModal = document.getElementById('domainModal');
         this.domainModalBackdrop = document.getElementById('domainModalBackdrop');
         this.domainModalCancel = document.getElementById('domainModalCancel');
@@ -182,6 +184,14 @@ class SuperBizAgentApp {
                 this.closeToolsMenu();
             });
         }
+        if (this.uploadPdfItem) {
+            this.uploadPdfItem.addEventListener('click', () => {
+                if (this.pdfFileInput) {
+                    this.pdfFileInput.click();
+                }
+                this.closeToolsMenu();
+            });
+        }
 
         if (this.domainModalConfirm) {
             this.domainModalConfirm.addEventListener('click', () => this.saveDomainFromModal());
@@ -203,7 +213,10 @@ class SuperBizAgentApp {
         });
         
         if (this.fileInput) {
-            this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
+            this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e, 'text'));
+        }
+        if (this.pdfFileInput) {
+            this.pdfFileInput.addEventListener('change', (e) => this.handleFileSelect(e, 'pdf'));
         }
     }
 
@@ -1226,13 +1239,21 @@ class SuperBizAgentApp {
     }
 
     // 处理文件选择
-    handleFileSelect(event) {
+    handleFileSelect(event, mode = 'text') {
         const file = event.target.files[0];
         if (file) {
-            // 验证文件格式
-            if (!this.validateFileType(file)) {
+            if (mode === 'pdf') {
+                if (!this.validatePdfFileType(file)) {
+                    this.showNotification('只支持上传 PDF 格式的文件', 'error');
+                    if (this.pdfFileInput) this.pdfFileInput.value = '';
+                    return;
+                }
+                this.uploadPdfFile(file);
+                return;
+            }
+            if (!this.validateTextFileType(file)) {
                 this.showNotification('只支持上传 TXT 或 Markdown (.md) 格式的文件', 'error');
-                this.fileInput.value = '';
+                if (this.fileInput) this.fileInput.value = '';
                 return;
             }
             this.uploadFile(file);
@@ -1258,11 +1279,36 @@ class SuperBizAgentApp {
         return data;
     }
 
-    // 验证文件类型
-    validateFileType(file) {
+    /** 单次 POST /api/upload/pdf（不含遮罩与 isStreaming） */
+    async _postUploadPdfFile(file) {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('tenant_id', this.getRagTenantId());
+        const response = await fetch(`${this.apiBaseUrl}/upload/pdf`, {
+            method: 'POST',
+            body: formData,
+        });
+        if (!response.ok) {
+            throw new Error(await this.parseHttpError(response));
+        }
+        const data = await response.json();
+        if (!((data.code === 200 || data.message === 'success') && data.data)) {
+            throw new Error(data.message || 'PDF 上传失败');
+        }
+        return data;
+    }
+
+    // 验证文本文件类型
+    validateTextFileType(file) {
         const fileName = String(file.name || '').trim().toLowerCase();
         const allowedExtensions = ['.txt', '.md', '.markdown'];
         return allowedExtensions.some((ext) => fileName.endsWith(ext));
+    }
+
+    // 验证 PDF 文件类型
+    validatePdfFileType(file) {
+        const fileName = String(file.name || '').trim().toLowerCase();
+        return fileName.endsWith('.pdf');
     }
 
     // 上传文件到知识库（输入栏「上传文件」菜单：立即单文件上传）
@@ -1272,7 +1318,7 @@ class SuperBizAgentApp {
             return;
         }
 
-        if (!this.validateFileType(file)) {
+        if (!this.validateTextFileType(file)) {
             this.showNotification('只支持上传 TXT 或 Markdown (.md) 格式的文件', 'error');
             return;
         }
@@ -1297,6 +1343,45 @@ class SuperBizAgentApp {
         } finally {
             if (this.fileInput) {
                 this.fileInput.value = '';
+            }
+            this.isStreaming = false;
+            this.showUploadOverlay(false);
+            this.updateUI();
+        }
+    }
+
+    // 上传 PDF 到知识库（输入栏「上传 PDF」菜单：立即单文件上传）
+    async uploadPdfFile(file) {
+        if (!this.isRagDomainExplicit()) {
+            this.showNotification('请先在工具菜单中选择知识领域，再上传嵌入', 'warning');
+            return;
+        }
+
+        if (!this.validatePdfFileType(file)) {
+            this.showNotification('只支持上传 PDF 格式的文件', 'error');
+            return;
+        }
+
+        if (file.size > RAG_UPLOAD_MAX_BYTES) {
+            this.showNotification(`文件不能超过 ${Math.round(RAG_UPLOAD_MAX_BYTES / (1024 * 1024))}MB（与后端一致）`, 'error');
+            return;
+        }
+
+        this.isStreaming = true;
+        this.updateUI();
+        this.showUploadOverlay(true, file.name);
+
+        try {
+            await this._postUploadPdfFile(file);
+            const tid = this.getRagTenantId();
+            const successMessage = `「${file.name}」PDF 已嵌入知识库（领域: ${tid}）。对话将使用同一领域检索。`;
+            this.addMessage('assistant', successMessage, false, true);
+        } catch (error) {
+            console.error('PDF 上传失败:', error);
+            this.showNotification('PDF 上传失败: ' + error.message, 'error');
+        } finally {
+            if (this.pdfFileInput) {
+                this.pdfFileInput.value = '';
             }
             this.isStreaming = false;
             this.showUploadOverlay(false);
