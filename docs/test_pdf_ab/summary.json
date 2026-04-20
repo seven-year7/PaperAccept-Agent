@@ -1,0 +1,21 @@
+{
+  "file": "E:/AgentStudy/super_biz_agent_py-release-2026-03-21/Agent-Create/PaperAccept-Agent/docx/test.pdf",
+  "results": [
+    {
+      "method": "docling",
+      "ok": true,
+      "elapsed_ms": 123250,
+      "chars": 33888,
+      "output_path": "E:/AgentStudy/super_biz_agent_py-release-2026-03-21/Agent-Create/PaperAccept-Agent/docs/test_pdf_ab/docling_test.md",
+      "error": ""
+    },
+    {
+      "method": "pypdf",
+      "ok": true,
+      "elapsed_ms": 760,
+      "chars": 26583,
+      "output_path": "E:/AgentStudy/super_biz_agent_py-release-2026-03-21/Agent-Create/PaperAccept-Agent/docs/test_pdf_ab/pypdf_test.md",
+      "error": ""
+    }
+  ]
+}
